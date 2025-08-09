@@ -4,7 +4,7 @@ mkdir -p data/answers
 mkdir -p data/evaluation
 mkdir -p data/reports
 
-models_to_evaluate=("phi4")
+models_to_evaluate=("phi4 mistral llama3 qwen2.5-coder llama2")
 prompting_techniques=("zero_shot" "one_shot" "chain_of_thought")
 
 for model in "${models_to_evaluate[@]}"; do
