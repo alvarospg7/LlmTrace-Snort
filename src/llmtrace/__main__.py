@@ -40,6 +40,20 @@ def scrape_and_clean():
     show_default=True,
     help="Generate zero shot dataset",
 )
+@llmtrace.command()
+@click.option("--input_file", default="alert.ids", help="Archivo de alertas Snort para parsear")
+@click.option("--output_file", default="alerts.json", help="Archivo JSON de salida")
+def parser(input_file, output_file):
+    click.echo(f"Parsing Snort alerts from {input_file}...")
+    try:
+        alerts = parse_snort_alerts(input_file)
+        save_to_json(alerts, output_file)
+        click.echo(f"Alerts saved to {output_file}")
+        click.echo(f"Total alerts parsed: {len(alerts)}")
+    except FileNotFoundError:
+        click.echo(f"Error: {input_file} not found.")
+    except Exception as e:
+        click.echo(f"Error parsing file: {e}")
 @click.option(
     "--one_shot", is_flag=True, default=False, help="Generate one shot dataset"
 )
