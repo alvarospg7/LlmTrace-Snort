@@ -1,11 +1,9 @@
 import json
 import os
 import re
-
 import plotly.express as px
 import plotly.graph_objects as go
 import requests
-
 
 class LLM_Evaluator:
     def __init__(
@@ -18,27 +16,32 @@ class LLM_Evaluator:
         self.__evaluator_model = evaluator_model
         self.__dataset = self.__load_dataset(dataset_path)
 
+    def __load_dataset(self, dataset_path: str):
+        dataset = []
+        try:
+            with open(os.path.join(os.getcwd(), dataset_path), "r") as f:
+                for line in f:
+                    dataset.append(json.loads(line))
+        except Exception as error:
+            print(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+        return dataset
+
     def answer_questions(
         self, output_path: str = "data/evaluation/generated_output.jsonl"
     ):
-        # Check if the directory exists
         os.makedirs("data/evaluation", exist_ok=True)
-
-        # Generate the output of the model to evaluate
         with open(output_path, "a") as f:
             for data in self.__dataset:
                 try:
                     output_text = ""
-
-                    # Generate the output using the model to evaluate
                     while not output_text:
                         output_text = self.__generate_response(
                             context=data["context"],
                             question=data["prompt"],
                             model=self.__model_to_eval,
                         )
-
-                    # Dump the generated output to a file
                     f.write(
                         json.dumps(
                             {"prompt": data["prompt"], "generated_output": output_text}
@@ -54,40 +57,31 @@ class LLM_Evaluator:
     def evaluate_model(
         self, generated_output_path: str = "data/evaluation/generated_output.jsonl"
     ):
-        # Load the generated output
         generated_output = self.__load_dataset(generated_output_path)
-
-        # Delete the extension of the generated output path
+        if not self.__dataset or not generated_output:
+            print("Error: Dataset or generated output is empty.")
+            return
         generated_output_path = generated_output_path.split("/")[-1].split(".")[0]
-
         with open(
             f"data/evaluation/evaluation_{generated_output_path}.jsonl", "a"
         ) as f:
             for i, generated_answer in enumerate(generated_output):
                 try:
-                    # Get the prompt and the generated answer
+                    if i >= len(self.__dataset):
+                        print(f"Error: Index {i} exceeds dataset size ({len(self.__dataset)}).")
+                        continue
                     generated_answer = generated_answer["generated_output"]
-
-                    # Get the real answer
                     real_answer = self.__dataset[i]["answer"]
-
-                    # Evaluate the generated answer with the evaluator model
-
-                    context = r'You are a model used to evaluate if this answer of other model is well answered, you ONLY can answer with this json format: {"is_correct": "Yes" or "No", "punctuation": <Number from 0 to 100 with how good is the question answered>}. Every other format answer will be considered as wrong.'
-
+                    context = r'You are a model used to evaluate if the answer of another model is correct. Compare the generated answer with the real answer. Mark it as correct ("is_correct": "Yes") if they convey the same meaning or provide the same information, even if the wording differs. Assign a punctuation from 0 to 100 based on accuracy and clarity (100 for exact or equivalent answers, lower for partial correctness). Answer ONLY in this JSON format: {"is_correct": "Yes" or "No", "punctuation": <Number from 0 to 100>}. Any other format will be considered wrong.'
                     input_text = f"Model to evaluate answer: {generated_answer}\nReal answer:\n{real_answer}"
-
                     output_text = ""
                     number_of_tries = 0
-
                     while not output_text:
                         output_text = self.__generate_response(
                             context=context,
                             question=input_text,
                             model=self.__evaluator_model,
                         )
-
-                        # If output text is not like the expected, try again
                         if not re.match(
                             r'{"is_correct": "(Yes|No)", "punctuation": \d{1,3}}',
                             output_text,
@@ -102,11 +96,7 @@ class LLM_Evaluator:
                                     "The model to evaluate the answer is not working properly, writing default answer and note and going to next question."
                                 )
                                 output_text = '{"is_correct": "No", "punctuation": 0, "note": "Model to evaluate the answer is not working properly"}'
-
-                    # Convert the output text to a dictionary
                     final_output = json.loads(output_text)
-
-                    # Dump the evaluation to a file
                     f.write(
                         json.dumps(
                             {
@@ -123,11 +113,8 @@ class LLM_Evaluator:
             f.close()
 
     def generate_report(self, evaluation_input: str):
-        # Load the generated output
         generated_output = self.__load_dataset(evaluation_input)
-
         data_per_question = {}
-
         for i in range(9):
             data_per_question[f"question{i}"] = {
                 "correct": 0,
@@ -135,69 +122,45 @@ class LLM_Evaluator:
                 "total": 0,
                 "total_punct": 0,
             }
-
         for i, generated_answer in enumerate(generated_output):
             try:
-                # Get the evaluation
                 evaluation = generated_answer["evaluation"]
-
-                # Get the punctuation
                 punctuation = evaluation["punctuation"]
-
-                # Update the data_per_question dictionary
                 data_per_question[f"question{i % 9}"]["total"] += 1
-
                 if evaluation["is_correct"] == "Yes":
                     data_per_question[f"question{i % 9}"]["correct"] += 1
-
                 data_per_question[f"question{i % 9}"]["total_punct"] += punctuation
-
-                # If evaluation has a note, increment the problematic_eval counter
                 if "note" in evaluation:
                     data_per_question[f"question{i % 9}"]["problematic_eval"] += 1
-
             except Exception as error:
                 print(
                     f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
                 )
-
-        # Print general report and report separated by question
         print("----------------")
         print("General report")
         print("----------------")
-
         total_correct = 0
         total_problematic_eval = 0
         total_questions = 0
         total_punct = 0
-
         for data in data_per_question.values():
             total_correct += data["correct"]
-            total_problematic_eval += data["problematic_eval"]
+            total_problematic_eval = data["problematic_eval"]
             total_questions += data["total"]
             total_punct += data["total_punct"]
-
         print(f"Total correct answers: {total_correct}")
         print(f"Total problematic evaluations: {total_problematic_eval}")
         print(f"Total questions: {total_questions}")
         print(
             f"Average punctuation: {total_punct / total_questions if total_questions != 0 else 0}"
         )
-
-        # Generate some charts
-
         model_name = evaluation_input.split("/")[-1].split(".")[0].split("_")[-1]
-
         type_of_dataset = "_".join(
             evaluation_input.split("/")[-1].split(".")[0].split("_")[1:-1]
         )
-
         os.makedirs(
             f"data/evaluation/charts/{model_name}/{type_of_dataset}", exist_ok=True
         )
-
-        # Generate pie chart with all correct, incorrect and problematic answers indepent of the question
-
         fig = px.pie(
             values=[
                 total_correct,
@@ -205,25 +168,20 @@ class LLM_Evaluator:
                 total_problematic_eval,
             ],
             names=["Correct", "Incorrect", "Problematic evaluations"],
-            title=f"Correct and incorrect answers: {type_of_dataset.replace("_", " ")} {model_name}",
+            title=f"Correct and incorrect answers: {type_of_dataset.replace('_', ' ')} {model_name}",
         )
-
         fig.write_image(
             f"data/evaluation/charts/{model_name}/{type_of_dataset}/correct_incorrect_pie_chart.png"
         )
-
         print("----------------")
         print("Report by question")
         print("----------------")
-
-        # Print the report
         for i in range(9):
             try:
                 correct = data_per_question[f"question{i}"]["correct"]
                 total = data_per_question[f"question{i}"]["total"]
                 total_punct = data_per_question[f"question{i}"]["total_punct"]
                 problematic_eval = data_per_question[f"question{i}"]["problematic_eval"]
-
                 print(
                     f"Question {i}: Correct: {correct}/{total} ({round(correct / total * 100, 2) if total != 0 else 0}%), Average punctuation: {round(total_punct / total, 2) if total != 0 else 0}, Problematic evaluations: {problematic_eval}"
                 )
@@ -231,9 +189,6 @@ class LLM_Evaluator:
                 print(
                     f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
                 )
-
-        # Generate bar chart with the correct and incorrect answers by question
-
         fig = go.Figure(
             data=[
                 go.Bar(
@@ -251,20 +206,14 @@ class LLM_Evaluator:
                 ),
             ]
         )
-
         fig.update_layout(
             barmode="group",
             title=f"Correct and incorrect answers by question: {type_of_dataset.replace('_', ' ')} {model_name}",
         )
-
         fig.write_image(
             f"data/evaluation/charts/{model_name}/{type_of_dataset}/correct_incorrect_bar_chart.png"
         )
-
-        # Generate radar chart with the total punctuation by question, take in account that the maximum punctuation that has to be the maximum value of the radar chart is 29700
-
         fig = go.Figure()
-
         fig.add_trace(
             go.Scatterpolar(
                 r=[
@@ -276,28 +225,14 @@ class LLM_Evaluator:
                 name="Total punctuation",
             )
         )
-
         fig.update_layout(
             polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
             showlegend=False,
             title=f"Total punctuation by question: {type_of_dataset.replace('_', ' ')} {model_name}",
         )
-
         fig.write_image(
             f"data/evaluation/charts/{model_name}/{type_of_dataset}/total_punctuation_radar_chart.png"
         )
-
-    def __load_dataset(self, dataset_path: str):
-        dataset = []
-        try:
-            with open(os.path.join(os.getcwd(), dataset_path), "r") as f:
-                for line in f:
-                    dataset.append(json.loads(line))
-        except Exception as error:
-            print(
-                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
-            )
-        return dataset
 
     def __generate_response(
         self,
@@ -307,13 +242,10 @@ class LLM_Evaluator:
         url: str = "http://localhost:11434/api/generate",
     ) -> str:
         response_text = ""
-        # Check if the Ollama API is running
         if requests.get("http://localhost:11434").text != "Ollama is running":
             print("Ollama is not running, please start the Ollama API to continue.")
-            # Block the execution of the program until user press a key
             input("Press any key to continue...")
         try:
-            # Generate the output using HTTP Ollama API
             data = {
                 "model": model,
                 "system": context,
@@ -323,14 +255,11 @@ class LLM_Evaluator:
                     "temperature": 0,
                 },
             }
-
             response = requests.post(url, data=json.dumps(data))
-
             if response.status_code == 200:
                 response_text = json.loads(response.text)["response"]
             else:
                 print(f"Error: {response.status_code}")
-
         except Exception as error:
             print(
                 f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
